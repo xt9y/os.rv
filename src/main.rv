@@ -8,62 +8,19 @@ global on_input = fn(ch) do
     if ch == "\n" do
         serial_puts("\n")
         const cmd = shell.line
-        if cmd == "echo" do
-            serial_puts("\n")
-        end else if cmd:len() >= 5 and cmd[0..5] == "echo " do
-            serial_puts(cmd[5..] ~ "\n")
-        end else if cmd == "help" do
-            serial_puts("help echo clear uptime disk disktest fb fbtest proctest faulttest ps\n")
-        end else if cmd == "clear" do
-            serial_puts("\x1b[2J\x1b[H")
-        end else if cmd == "uptime" do
-            print(time_ms())
-        end else if cmd == "disk" do
-            print(disk_sectors())
-        end else if cmd == "disktest" do
-            # Destructively tests the LAST sector. Use only on a disposable disk.
-            if disk_sectors() == 0 do
-                serial_puts("no disk\n")
-            end else do
-                disk_test.sector = ""
-                while disk_test.sector:len() < 1024 do
-                    disk_test.sector = disk_test.sector ~ "a5"
-                end
-                const lba = disk_sectors() - 1
-                if disk_write_hex(lba, disk_test.sector) do
-                    const expected = disk_test.sector
-                    const actual = disk_read_hex(lba)
-                    if actual == expected do
-                        serial_puts("disk write/read OK\n")
-                    end else do
-                        serial_puts("disk verification FAILED\n")
-                    end
-                end else do
-                    serial_puts("disk write FAILED\n")
-                end
-            end
-        end else if cmd == "fb" do
-            print(fb_width())
-            print(fb_height())
-        end else if cmd == "fbtest" do
-            if fb_clear(0x202020) do
-                fb_pixel(20, 20, 0xff0000)
-                serial_puts("framebuffer pixel written\n")
-            end else do
-                serial_puts("framebuffer unavailable\n")
-            end
-        end else if cmd == "faulttest" do
-            # HLT must trap in ring 3; the shell should survive the fault.
-            const pid = proc_spawn_hex("f4")
-            print(pid)
-        end else if cmd == "ps" do
-            print(proc_count())
-        end else if cmd == "proctest" do
-            const pid = proc_spawn_hex("b801000000bf15004000be11000000cd8031c0cd8068656c6c6f2066726f6d2072696e67330a")
-            print(pid)
-        end else if cmd != "" do
-            serial_puts("unknown command\n")
-        end
+
+        match cmd
+            | "echo" => serial_puts("\n")
+            | value when value:len() >= 5 => serial_puts(value[5..] ~ "\n")
+            | "help" => serial_puts("help: echo clear uptime disk fb ps\n")
+            | "clear" => serial_puts("\x1b[2J\x1b[H")
+            | "uptime" => print("in ms: ", time_ms())
+            | "disk" => print("disk_sectors: "disk_sectors())
+            | "fb" => print("fb_width:", fb_width(), "fb_height:", fb_height())
+            | "ps" => print("proc_count: "proc_count())
+            | "" => :nil
+            | _ => serial_puts("unknown command\n")
+        
         shell.line = ""
         serial_puts("> ")
         return :nil
@@ -81,5 +38,5 @@ global on_input = fn(ch) do
     serial_puts(ch)
 end
 
-serial_puts("rv.os 0.2\n")
+serial_puts("os.rv\n")
 serial_puts("kernel.zig: disk, timer, framebuffer, ring3 primitives\n\n> ")
