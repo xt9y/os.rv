@@ -10,17 +10,44 @@ global on_input = fn(ch) do
         const cmd = shell.line
 
         match cmd
-            | value when value:starts_with?("echo") => do
-                match value
+            | echo when echo:starts_with?("echo") 
+                => do match echo 
                     | text when text:len() >= 5 => serial_puts(text[5..] ~ "\n")
                     | _ => serial_puts("\n")
-            end
-            | "help" => serial_puts("help: echo clear uptime disk fb ps\n")
-            | "clear" => serial_puts("\x1b[2J\x1b[H")
-            | "uptime" => print("in ms: ", time_ms())
-            | "disk" => print("disk_sectors: ", disk_sectors())
-            | "fb" => print("fb_width:", fb_width(), "fb_height:", fb_height())
-            | "ps" => print("proc_count: ", proc_count())
+                end
+
+            | help when help:starts_with?("help")
+                => do match help
+                    | _ => serial_puts("help: echo clear uptime disk fb ps\n")
+                   end
+
+            | clear when clear:starts_with?("clear") 
+                => do match clear
+                    | _ => serial_puts("\x1b[2J\x1b[H")
+                   end
+
+            | uptime when uptime:starts_with?("uptime") 
+                => do match uptime
+                    | _ => print("in ms: ", time_ms())
+                   end
+
+            | disk when disk:starts_with?("disk") 
+                => do match disk
+                    | _ => print("disk_sectors: ", disk_sectors())
+                   end
+
+            | fb when fb:starts_with?("fb")
+                => do match fb
+                    | text when text[3..] == "width" => print("fb_width:", fb_width()) 
+                    | text when text[3..] == "height" => print("fb_height:", fb_height())
+                    | _ => print("fb_width", fb_width(), "fb_height", fb_height())
+                   end
+
+            | ps when ps:starts_with?("ps")
+                => do match ps
+                    | _ => print("proc_count: ", proc_count())
+                   end
+
             | "" => :nil
             | _ => serial_puts("unknown command\n")
         
