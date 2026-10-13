@@ -1,0 +1,67 @@
+name: TEST
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Install emulator tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xorriso qemu-system-x86 nasm
+      - name: Compile
+        run: make compile
+      - name: Boot test
+        shell: bash
+        run: |
+          timeout 20s make run > .build/boot.log 2>&1 || rc=$?
+          cat .build/boot.log
+          test "${rc:-0}" -eq 0 -o "${rc:-0}" -eq 124
+          grep -Fq 'kernel.zig: IRQ, timer, disk, processes ready' .build/boot.log
+          grep -Fq 'rv.os 0.2' .build/boot.log
+          grep -Fq 'ata: primary master' .build/boot.log
+      - name: Exercise timer, disk, and protected user process
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import time
+          from pathlib import Path
+
+          with Path(".build/interactive.log").open("wb") as log:
+              process = subprocess.Popen(
+                  ["qemu-system-x86_64", "-M", "pc", "-m", "256M",
+                   "-smp", "1", "-cdrom", ".build/rv-os.iso", "-boot", "d",
+                   "-display", "none", "-serial", "stdio", "-monitor", "none",
+                   "-no-reboot", "-drive", "file=.build/disk.img,format=raw,if=ide,index=0"],
+                  stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+              try:
+                  time.sleep(3)
+                  for command in ["uptime", "disk", "disktest", "fbtest", "faulttest"]:
+                      process.stdin.write((command + "\r").encode())
+                      process.stdin.flush()
+                      time.sleep(0.25)
+                  for i in range(10):
+                      process.stdin.write(b"proctest\r")
+                      process.stdin.flush()
+                      time.sleep(0.25)
+                  time.sleep(2)
+              finally:
+                  if process.poll() is None:
+                      process.terminate()
+                  process.wait(timeout=10)
+
+          data = Path(".build/interactive.log").read_text(errors="replace")
+          print(data[-8000:])
+          assert "kernel.zig: IRQ, timer, disk, processes ready" in data
+          assert "disk write/read OK" in data, "disk write/read roundtrip failed"
+          assert "user process terminated on fault" in data, "privilege fault not isolated"
+          assert data.count("hello from ring3") == 10, "process slots not reused correctly"
+          assert "KERNEL PANIC" not in data
+          PY

@@ -3,8 +3,9 @@ QEMU ?= qemu-system-x86_64
 BUILD := .build
 ISO   := $(BUILD)/rv-os.iso
 ELF   := zig-out/bin/rv-os
+DISK  := $(BUILD)/disk.img
 
-.PHONY: all init kernel compile run clean FORCE
+.PHONY: all init kernel compile run run-gui clean distclean
 .DEFAULT_GOAL := all
 all: compile
 
@@ -41,8 +42,21 @@ compile: kernel kernel/limine/limine
 	@./kernel/limine/limine bios-install $(ISO)
 	@echo "ISO: $(ISO)"
 
-run: compile
-	@$(QEMU) -M pc -m 256M -smp 1 -cdrom $(ISO) -boot d -display none -serial stdio -monitor none -no-reboot
+$(DISK):
+	@mkdir -p $(BUILD)
+	@qemu-img create -f raw $@ 16M
 
+run: compile $(DISK)
+	@$(QEMU) -M pc -m 256M -smp 1 -cdrom $(ISO) -boot d -display none -serial stdio -monitor none -no-reboot \
+		-drive file=$(DISK),format=raw,if=ide,index=0
+
+run-gui: compile $(DISK)
+	@$(QEMU) -M pc -m 256M -smp 1 -cdrom $(ISO) -boot d -vga std -serial stdio -monitor none -no-reboot \
+		-drive file=$(DISK),format=raw,if=ide,index=0
+
+# Keep the persistent disk image across ordinary clean/build cycles.
 clean:
-	@rm -rf $(BUILD) zig-out .zig-cache
+	@rm -rf $(BUILD)/iso_root $(BUILD)/program.rv $(ISO) zig-out .zig-cache
+
+distclean: clean
+	@rm -f $(DISK)

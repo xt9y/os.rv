@@ -23,6 +23,103 @@ fn renderFailure(vm: *revo.VM, failure: anytype) void {
     puts("\n");
 }
 
+
+// Strictly validate floating-point Revo integers at the native boundary.
+fn uintArg(args: []const revo.Value, index: usize) ?u64 {
+    const value = args[index].asNumOpt() orelse return null;
+    if (!std.math.isFinite(value) or value < 0 or value > 4_503_599_627_370_496.0 or @floor(value) != value) return null;
+    return @intFromFloat(value);
+}
+fn number(value: u64) HostResult {
+    return HostResult.data(revo.Value.new.num(@as(f64, @floatFromInt(value))));
+}
+fn boolean(value: bool) HostResult {
+    return HostResult._bool(value);
+}
+fn hexNibble(ch: u8) ?u8 {
+    return switch (ch) {
+        '0'...'9' => ch - '0',
+        'a'...'f' => ch - 'a' + 10,
+        'A'...'F' => ch - 'A' + 10,
+        else => null,
+    };
+}
+fn decodeHex(hex: []const u8, buf: []u8) ?usize {
+    if (hex.len % 2 != 0 or hex.len / 2 > buf.len) return null;
+    for (0..hex.len / 2) |i| {
+        const hi = hexNibble(hex[i * 2]) orelse return null;
+        const lo = hexNibble(hex[i * 2 + 1]) orelse return null;
+        buf[i] = (hi << 4) | lo;
+    }
+    return hex.len / 2;
+}
+fn register(vm: *revo.VM, comptime name: []const u8, comptime types: []const HostType, impl: revo.baselib.host.HostFn) !void {
+    const f = try vm.installHost(name, revo.baselib.host.define(types, impl));
+    try vm.registerGlobal(name, f);
+}
+
+fn hostTime(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return number(k.timer.millis());
+}
+fn hostDiskSectors(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return number(k.ata.sectorCount());
+}
+fn hostDiskRead(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const lba = uintArg(args, 0) orelse return HostResult.other("invalid LBA");
+    if (lba >= k.ata.sectorCount() or lba >= (@as(u64, 1) << 28)) return HostResult.other("sector out of range");
+    var bytes: [k.ata.SECTOR]u8 = undefined;
+    if (!k.ata.read(@intCast(lba), &bytes)) return HostResult.other("disk read failed");
+    const digits = "0123456789abcdef";
+    var hex: [k.ata.SECTOR * 2]u8 = undefined;
+    for (bytes, 0..) |b, i| {
+        hex[i * 2] = digits[b >> 4];
+        hex[i * 2 + 1] = digits[b & 15];
+    }
+    return HostResult.data(try vm.ownValueString(&hex));
+}
+fn hostDiskWrite(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const lba = uintArg(args, 0) orelse return boolean(false);
+    if (lba >= k.ata.sectorCount() or lba >= (@as(u64, 1) << 28)) return boolean(false);
+    const sid = args[1].asString() orelse return boolean(false);
+    const hex = vm.stringValue(sid);
+    var bytes: [k.ata.SECTOR]u8 = undefined;
+    if ((decodeHex(hex, &bytes) orelse return boolean(false)) != bytes.len) return boolean(false);
+    return boolean(k.ata.write(@intCast(lba), &bytes));
+}
+fn hostFbWidth(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return number(if (k.framebuffer.info()) |fb| fb.width else 0);
+}
+fn hostFbHeight(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return number(if (k.framebuffer.info()) |fb| fb.height else 0);
+}
+fn hostFbPixel(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const x = uintArg(args, 0) orelse return boolean(false);
+    const y = uintArg(args, 1) orelse return boolean(false);
+    const color = uintArg(args, 2) orelse return boolean(false);
+    if (color > 0xffffff) return boolean(false);
+    return boolean(k.framebuffer.pixel(x, y, @intCast(color)));
+}
+fn hostFbClear(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const color = uintArg(args, 0) orelse return boolean(false);
+    if (color > 0xffffff) return boolean(false);
+    return boolean(k.framebuffer.clear(@intCast(color)));
+}
+fn hostProcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    return number(k.tasks.count());
+}
+fn hostProcState(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const pid = uintArg(args, 0) orelse return number(0);
+    return number(k.tasks.state(pid));
+}
+fn hostProcSpawn(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const sid = args[0].asString() orelse return HostResult.other("expected hex string");
+    const hex = vm.stringValue(sid);
+    var code: [k.tasks.CODE_SIZE]u8 = undefined;
+    const len = decodeHex(hex, &code) orelse return HostResult.other("invalid hex process image");
+    const pid = k.tasks.spawn(code[0..len]) orelse return HostResult.other("cannot create process");
+    return number(pid);
+}
+
 pub fn boot(alloc: std.mem.Allocator) void {
     const vm = alloc.create(revo.VM) catch {
         puts("Revo: VM allocation failed\n");
@@ -38,15 +135,18 @@ pub fn boot(alloc: std.mem.Allocator) void {
         return;
     };
 
-    const define = revo.baselib.host.define;
-    const putsfn = vm.installHost("serial_puts", define(&[_]HostType{.string}, hostPuts)) catch {
-        puts("Revo: host registration failed\n");
-        return;
-    };
-    vm.registerGlobal("serial_puts", putsfn) catch {
-        puts("Revo: host registration failed\n");
-        return;
-    };
+    register(vm, "serial_puts", &.{.string}, hostPuts) catch return puts("Revo: host registration failed\n");
+    register(vm, "time_ms", &.{}, hostTime) catch return puts("Revo: time registration failed\n");
+    register(vm, "disk_sectors", &.{}, hostDiskSectors) catch return puts("Revo: disk registration failed\n");
+    register(vm, "disk_read_hex", &.{.number}, hostDiskRead) catch return puts("Revo: disk registration failed\n");
+    register(vm, "disk_write_hex", &.{.number, .string}, hostDiskWrite) catch return puts("Revo: disk registration failed\n");
+    register(vm, "fb_width", &.{}, hostFbWidth) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_height", &.{}, hostFbHeight) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_pixel", &.{.number, .number, .number}, hostFbPixel) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_clear", &.{.number}, hostFbClear) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "proc_count", &.{}, hostProcCount) catch return puts("Revo: process registration failed\n");
+    register(vm, "proc_state", &.{.number}, hostProcState) catch return puts("Revo: process registration failed\n");
+    register(vm, "proc_spawn_hex", &.{.string}, hostProcSpawn) catch return puts("Revo: process registration failed\n");
 
     const build_result = revo.lang.build(vm, .{ .name = "os.rv", .text = program }, .{}) catch {
         puts("Revo: compilation threw\n");

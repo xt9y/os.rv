@@ -1,5 +1,6 @@
 .build/
 zig-out/
+zig-pkg/
 .zig-cache/
 .DS_Store
 *.iso
