@@ -10,14 +10,17 @@ global on_input = fn(ch) do
         const cmd = shell.line
 
         match cmd
-            | "echo" => serial_puts("\n")
+            | value when value:starts_with?("echo") => do
+                match value
+                    | text when text:len() >= 5 => serial_puts(text[5..] ~ "\n")
+                    | _ => serial_puts("\n")
+            end
             | "help" => serial_puts("help: echo clear uptime disk fb ps\n")
             | "clear" => serial_puts("\x1b[2J\x1b[H")
             | "uptime" => print("in ms: ", time_ms())
             | "disk" => print("disk_sectors: ", disk_sectors())
             | "fb" => print("fb_width:", fb_width(), "fb_height:", fb_height())
             | "ps" => print("proc_count: ", proc_count())
-            | value when value:len() >= 5 and value[0..5] == "echo " => serial_puts(value[5..] ~ "\n")
             | "" => :nil
             | _ => serial_puts("unknown command\n")
         
