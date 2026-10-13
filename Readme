@@ -3,9 +3,7 @@ Revo OS
 => Zig 0.17.0, QEMU and xorriso are required
 
     brew install zig qemu xorriso 
-    git submodule update --init --recursive
-    make compile
-    make run
+    make init compile run
 
 Creates ./.build/disk.img (16 MiB)
 The file persists across make clean, make distclean deletes it

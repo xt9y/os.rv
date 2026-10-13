@@ -11,13 +11,13 @@ global on_input = fn(ch) do
 
         match cmd
             | "echo" => serial_puts("\n")
-            | value when value:len() >= 5 => serial_puts(value[5..] ~ "\n")
             | "help" => serial_puts("help: echo clear uptime disk fb ps\n")
             | "clear" => serial_puts("\x1b[2J\x1b[H")
             | "uptime" => print("in ms: ", time_ms())
-            | "disk" => print("disk_sectors: "disk_sectors())
+            | "disk" => print("disk_sectors: ", disk_sectors())
             | "fb" => print("fb_width:", fb_width(), "fb_height:", fb_height())
-            | "ps" => print("proc_count: "proc_count())
+            | "ps" => print("proc_count: ", proc_count())
+            | value when value:len() >= 5 and value[0..5] == "echo " => serial_puts(value[5..] ~ "\n")
             | "" => :nil
             | _ => serial_puts("unknown command\n")
         
