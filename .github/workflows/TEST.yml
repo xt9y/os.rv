@@ -1,0 +1,70 @@
+name: TEST
+on:
+  push:
+    branches: [kernel-resource-test]
+
+jobs:
+  resource-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Install build and emulator tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xorriso qemu-system-x86 nasm
+      - name: Verify default configuration compiles
+        run: make kernel
+      - name: Prepare a process that executes across a 4 KiB boundary
+        run: |
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+
+          offset = 5000
+          message = b"cross page ring3\n"
+          jmp = b"\xe9" + struct.pack("<i", offset - 5)
+          code = (
+              b"\xb8" + struct.pack("<I", 1)
+              + b"\xbf" + struct.pack("<I", 0x400000 + offset + 21)
+              + b"\xbe" + struct.pack("<I", len(message))
+              + b"\xcd\x80\x31\xc0\xcd\x80" + message
+          )
+          image = jmp + b"\x90" * (offset - len(jmp)) + code
+          assert len(image) > 4096
+          Path("src/00_config_test.rv").write_text(
+              'const pid = proc_spawn_hex("' + image.hex() + '")\n'
+              'print("config pid:", pid)\n'
+          )
+          PY
+      - name: Compile with non-default resource policy
+        run: make compile ZIG_OPTIONS="-Dheap-mib=32 -Dboot-stack-mib=8 -Dmax-tasks=12 -Dprocess-code-pages=2 -Duser-stack-pages=8 -Dkernel-stack-pages=8 -Dmax-syscall-write-bytes=8192 -Dpit-hz=200"
+      - name: Boot and execute multipage user process
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import time
+          from pathlib import Path
+
+          subprocess.run(["qemu-img", "create", "-f", "raw", ".build/disk.img", "16M"], check=True)
+          with Path(".build/config-test.log").open("wb") as log:
+              p = subprocess.Popen(
+                  ["qemu-system-x86_64", "-M", "pc", "-m", "256M", "-smp", "1",
+                   "-cdrom", ".build/rv-os.iso", "-boot", "d",
+                   "-display", "none", "-serial", "stdio", "-monitor", "none",
+                   "-no-reboot", "-drive", "file=.build/disk.img,format=raw,if=ide,index=0"],
+                  stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+              try:
+                  time.sleep(7)
+              finally:
+                  if p.poll() is None: p.terminate()
+                  p.wait(timeout=15)
+          output = Path(".build/config-test.log").read_text(errors="replace")
+          print(output[-10000:])
+          assert "kernel.zig: IRQ, timer, disk, processes ready" in output
+          assert "config pid: 1" in output
+          assert "cross page ring3" in output
+          assert "KERNEL PANIC" not in output
+          PY
