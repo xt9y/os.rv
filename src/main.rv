@@ -1,56 +1,17 @@
 # The host terminal sends UTF-8 bytes over QEMU COM1.
 # OS behavior is entirely in Revo; native hardware access stays in kernel.zig.
 
+# constants
+const clear_trm_value = "\x1b[2J\x1b[H"
+
 global shell = { line = "" }
 global disk_test = { sector = "" }
 
 global on_input = fn(ch) do
+
     if ch == "\n" do
         serial_puts("\n")
-        const cmd = shell.line
-
-        match cmd
-            | echo when echo:starts_with?("echo") 
-                => do match echo 
-                    | text when text:len() >= 5 => serial_puts(text[5..] ~ "\n")
-                    | _ => serial_puts("\n")
-                end
-
-            | help when help:starts_with?("help")
-                => do match help
-                    | _ => serial_puts("help: echo clear uptime disk fb ps\n")
-                   end
-
-            | clear when clear:starts_with?("clear") 
-                => do match clear
-                    | _ => serial_puts("\x1b[2J\x1b[H")
-                   end
-
-            | uptime when uptime:starts_with?("uptime") 
-                => do match uptime
-                    | _ => print("in ms: ", time_ms())
-                   end
-
-            | disk when disk:starts_with?("disk") 
-                => do match disk
-                    | _ => print("disk_sectors: ", disk_sectors())
-                   end
-
-            | fb when fb:starts_with?("fb")
-                => do match fb
-                    | text when text[3..] == "width" => print("fb_width:", fb_width()) 
-                    | text when text[3..] == "height" => print("fb_height:", fb_height())
-                    | _ => print("fb_width", fb_width(), "fb_height", fb_height())
-                   end
-
-            | ps when ps:starts_with?("ps")
-                => do match ps
-                    | _ => print("proc_count: ", proc_count())
-                   end
-
-            | "" => :nil
-            | _ => serial_puts("unknown command\n")
-        
+        process_cmd(shell.line)
         shell.line = ""
         serial_puts("> ")
         return :nil
@@ -66,7 +27,13 @@ global on_input = fn(ch) do
 
     shell.line = shell.line ~ ch
     serial_puts(ch)
+
 end
 
-serial_puts("os.rv\n")
-serial_puts("kernel.zig: disk, timer, framebuffer, ring3 primitives\n\n> ")
+serial_puts(clear_trm_value)
+serial_puts("REVO operating system => xt9y/kernel.zig contains the modular language independent kernel.\n") 
+serial_puts("Everything else is done inside xt9y/os.rv\n\n")
+
+serial_puts("Welcome to the OS :)\n")
+serial_puts("WIP enjoy, press enter to enter.\n")
+

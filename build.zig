@@ -1,5 +1,5 @@
 const std = @import("std");
-const chosen = @import("kernel.config.zig");
+const chosen = @import("bridge/kernel.config.zig");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});

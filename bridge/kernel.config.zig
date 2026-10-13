@@ -1,7 +1,7 @@
 // Consumer-owned kernel configuration. These defaults come from kernel.zig;
 // change individual fields here, or override them with zig build -D flags.
 // Values take effect at build time, not while the OS is running.
-const default = @import("kernel/src/config_defaults.zig");
+const default = @import("../kernel/src/config_defaults.zig");
 
 pub const heap_mib: usize = default.heap_mib;
 pub const boot_stack_mib: usize = default.boot_stack_mib;
