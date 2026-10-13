@@ -1,0 +1,22 @@
+Revo os running on [kernel.zig](https://github.com/xt9y/kernel.zig) => a standalone MIT-derived x86-64 Zig kernel.
+Zig 0.17.0, QEMU and xorriso are required.
+
+    brew install zig qemu xorriso 
+    git submodule update --init --recursive
+    make compile
+    make run
+
+Creates ./.build/disk.img (16 MiB, raw IDE primary master). The file persists across make clean, make distclean deletes it.
+
+The only language-dependent file is bridge/app.zig 
+Hardware and scheduling are implemented by the independent ./kernel/ git submodule.
+
+| serial_puts(text) => Write to COM1 |
+| time_ms() => Milliseconds since PIT timer started (100 Hz resolution) 
+| disk_sectors() => Detected IDE sector count, zero if absent 
+| disk_read_hex(lba) => Read 512 bytes as 1024 ASCII hex characters 
+| disk_write_hex(lba, hex) => Write one 512-byte sector from exactly 1024 hex digits 
+| fb_width(), fb_height() => Framebuffer size, zero when unavailable 
+| fb_pixel(x,y,rgb), fb_clear(rgb) => Pixel/clear operations on 32-bit RGB framebuffer 
+| proc_spawn_hex(code) => Spawn <= 4096 bytes of raw position-independent x86-64 instructions in ring 3 
+| proc_count(), proc_state(pid) => Process status 
