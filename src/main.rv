@@ -1,0 +1,35 @@
+# All shell behavior lives in Revo. The host terminal supplies decoded
+# UTF-8 bytes via the kernel's COM1 UART, so no guest PS/2 keymap is needed.
+
+global shell = { line = "" }
+
+global on_input = fn(ch) do
+    if ch == "\n" do
+        serial_puts("\n")
+        const cmd = shell.line
+        if cmd == "echo" do
+            serial_puts("\n")
+        end else if cmd:len() >= 5 and cmd[0..5] == "echo " do
+            serial_puts(cmd[5..] ~ "\n")
+        end else if cmd != "" do
+            serial_puts("unknown command\n")
+        end
+        shell.line = ""
+        serial_puts("> ")
+        return :nil
+    end
+
+    if ch == "\b" do
+        if shell.line:len() > 0 do
+            shell.line = shell.line[0..(shell.line:len() - 1)]
+            serial_puts("\b \b")
+        end
+        return :nil
+    end
+
+    shell.line = shell.line ~ ch
+    serial_puts(ch)
+end
+
+serial_puts("rv.os 0.1\n")
+serial_puts("Revo on kernel.zig (headless)\n\n> ")

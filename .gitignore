@@ -1,0 +1,7 @@
+.build/
+zig-out/
+.zig-cache/
+.DS_Store
+*.iso
+*.swp
+*.swo

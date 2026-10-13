@@ -1,0 +1,10 @@
+.{
+    .name = .rv_os,
+    .version = "0.1.0",
+    .fingerprint = 0x47ed8591f382459c,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .revo = .{ .path = "revo" },
+    },
+    .paths = .{ "" },
+}
