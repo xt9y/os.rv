@@ -1,4 +1,5 @@
 const std = @import("std");
+const chosen = @import("kernel.config.zig");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
@@ -61,6 +62,24 @@ pub fn build(b: *std.Build) void {
     defer visited.deinit();
     kernelize(revo, &visited);
 
+    // The consumer controls hardware/resource policy, the kernel implements it.
+    // -Dfoo= overrides values from kernel.config.zig for this build only.
+    const options = b.addOptions();
+    options.addOption(usize, "heap_mib", b.option(usize, "heap-mib", "Contiguous kernel heap size (MiB)") orelse chosen.heap_mib);
+    options.addOption(usize, "boot_stack_mib", b.option(usize, "boot-stack-mib", "Limine bootstrap stack (MiB)") orelse chosen.boot_stack_mib);
+    options.addOption(usize, "max_tasks", b.option(usize, "max-tasks", "Total task slots including PID 0") orelse chosen.max_tasks);
+    options.addOption(usize, "process_code_pages", b.option(usize, "process-code-pages", "Max user executable pages (4 KiB each)") orelse chosen.process_code_pages);
+    options.addOption(usize, "user_stack_pages", b.option(usize, "user-stack-pages", "User stack pages per task") orelse chosen.user_stack_pages);
+    options.addOption(usize, "kernel_stack_pages", b.option(usize, "kernel-stack-pages", "Privileged stack pages per task") orelse chosen.kernel_stack_pages);
+    options.addOption(usize, "max_syscall_write_bytes", b.option(usize, "max-syscall-write-bytes", "Max user write syscall bytes") orelse chosen.max_syscall_write_bytes);
+    options.addOption(u64, "pit_hz", b.option(u64, "pit-hz", "8254 PIT ticks per second") orelse chosen.pit_hz);
+    options.addOption(u64, "user_code_base", b.option(u64, "user-code-base", "Raw user program virtual load address") orelse chosen.user_code_base);
+    options.addOption(u64, "user_stack_top", b.option(u64, "user-stack-top", "User stack virtual high address") orelse chosen.user_stack_top);
+    options.addOption(bool, "ata_secondary", b.option(bool, "ata-secondary", "Use legacy secondary ATA channel") orelse chosen.ata_secondary);
+    options.addOption(bool, "ata_slave", b.option(bool, "ata-slave", "Use ATA slave rather than master") orelse chosen.ata_slave);
+    options.addOption(u32, "ata_spin_limit", b.option(u32, "ata-spin-limit", "ATA polling timeout (loop iterations)") orelse chosen.ata_spin_limit);
+
+    kernel.addImport("kernel_config", options.createModule());
     boot.addImport("kernel", kernel);
     boot.addImport("app", app);
     app.addImport("kernel", kernel);

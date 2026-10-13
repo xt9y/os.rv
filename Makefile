@@ -4,6 +4,7 @@ BUILD := .build
 ISO   := $(BUILD)/rv-os.iso
 ELF   := zig-out/bin/rv-os
 DISK  := $(BUILD)/disk.img
+ZIG_OPTIONS ?=
 
 .PHONY: all init kernel compile run run-gui clean distclean
 .DEFAULT_GOAL := all
@@ -19,7 +20,7 @@ $(BUILD)/program.rv: $(wildcard src/*.rv) Makefile | init
 	@if cmp -s "$@.tmp" "$@"; then rm "$@.tmp"; else mv "$@.tmp" "$@"; fi
 
 kernel: $(BUILD)/program.rv
-	@$(ZIG) build -Doptimize=ReleaseSmall
+	@$(ZIG) build -Doptimize=ReleaseSmall $(ZIG_OPTIONS)
 	@echo "Kernel ELF: $(ELF)"
 
 kernel/limine/limine: | init
