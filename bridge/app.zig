@@ -114,8 +114,13 @@ fn hostProcState(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
 fn hostProcSpawn(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
     const sid = args[0].asString() orelse return HostResult.other("expected hex string");
     const hex = vm.stringValue(sid);
-    var code: [k.tasks.CODE_SIZE]u8 = undefined;
-    const len = decodeHex(hex, &code) orelse return HostResult.other("invalid hex process image");
+    if (hex.len % 2 != 0 or hex.len / 2 > k.tasks.CODE_SIZE)
+        return HostResult.other("invalid or oversized process image");
+    // Allocate exactly the supplied image size instead of reserving a fixed
+    // 4 KiB (or consumer-selected maximum) on the kernel call stack.
+    const code = try vm.runtime.alloc.alloc(u8, hex.len / 2);
+    defer vm.runtime.alloc.free(code);
+    const len = decodeHex(hex, code) orelse return HostResult.other("invalid hex process image");
     const pid = k.tasks.spawn(code[0..len]) orelse return HostResult.other("cannot create process");
     return number(pid);
 }
