@@ -2,7 +2,7 @@ const std = @import("std");
 const chosen = @import("bridge/kernel.config.zig");
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Kernel optimization mode (default: ReleaseSmall)") orelse .ReleaseSmall;
     var query: std.Target.Query = .{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
@@ -84,8 +84,27 @@ pub fn build(b: *std.Build) void {
     boot.addImport("app", app);
     app.addImport("kernel", kernel);
     app.addImport("revo", revo);
+    // Bundle all top-level Revo sources, with main.rv last as the entry point.
+    const bundle_script =
+        \\set -eu
+        \\src="$1"
+        \\out="$2"
+        \\test -f "$src/main.rv"
+        \\find "$src" -maxdepth 1 -type f -name '*.rv' ! -name 'main.rv' -print | LC_ALL=C sort | while IFS= read -r file; do
+        \\    cat "$file"
+        \\    printf '\n'
+        \\done > "$out"
+        \\cat "$src/main.rv" >> "$out"
+        \\printf '\n' >> "$out"
+    ;
+    const bundle = b.addSystemCommand(&.{ "sh", "-c", bundle_script, "revo-bundle" });
+    bundle.addDirectoryArg(b.path("src"));
+    const rv_program = bundle.addOutputFileArg("program.rv");
+    // Always rescan src/ so newly added .rv files cannot be missed by caching.
+    bundle.stdio = .inherit;
+
     app.addAnonymousImport("rv_program", .{
-        .root_source_file = b.path(".build/program.rv"),
+        .root_source_file = rv_program,
     });
 
     const exe = b.addExecutable(.{ .name = "rv-os", .root_module = boot });
@@ -93,6 +112,83 @@ pub fn build(b: *std.Build) void {
     exe.pie = false;
     exe.setLinkerScript(b.path("kernel/src/linker.ld"));
     b.installArtifact(exe);
+
+    const kernel_step = b.step("kernel", "Build and install the x86-64 kernel ELF");
+    kernel_step.dependOn(b.getInstallStep());
+
+    // Limine is an independent submodule with its own Makefile.
+    const limine = b.addSystemCommand(&.{ "make", "-C", "kernel/limine" });
+    limine.stdio = .inherit;
+
+    const iso_script =
+        \\set -eu
+        \\elf="$1"
+        \\iso="$2"
+        \\root="$iso.root"
+        \\trap 'rm -rf "$root"' EXIT
+        \\rm -rf "$root"
+        \\mkdir -p "$root/boot/limine" "$root/EFI/BOOT"
+        \\cp "$elf" "$root/boot/rv-os"
+        \\printf '%s\n' 'timeout: 0' '' '/rv.os' '    protocol: limine' '    path: boot():/boot/rv-os' > "$root/boot/limine/limine.conf"
+        \\cp kernel/limine/limine-bios.sys kernel/limine/limine-bios-cd.bin kernel/limine/limine-uefi-cd.bin "$root/boot/limine/"
+        \\cp kernel/limine/BOOTX64.EFI kernel/limine/BOOTIA32.EFI "$root/EFI/BOOT/"
+        \\xorriso -as mkisofs -R -r -J \
+        \\    -b boot/limine/limine-bios-cd.bin \
+        \\    -no-emul-boot -boot-load-size 4 -boot-info-table \
+        \\    -hfsplus -apm-block-size 2048 \
+        \\    --efi-boot boot/limine/limine-uefi-cd.bin \
+        \\    -efi-boot-part --efi-boot-image --protective-msdos-label \
+        \\    "$root" -o "$iso"
+        \\kernel/limine/limine bios-install "$iso"
+    ;
+    const iso = b.addSystemCommand(&.{ "sh", "-c", iso_script, "make-iso" });
+    iso.step.dependOn(&limine.step);
+    iso.addArtifactArg(exe);
+    const iso_path = iso.addOutputFileArg("rv-os.iso");
+    // Hash Limine inputs so the ISO is rebuilt if the bootloader changes.
+    for ([_][]const u8{
+        "kernel/limine/limine",
+        "kernel/limine/limine-bios.sys",
+        "kernel/limine/limine-bios-cd.bin",
+        "kernel/limine/limine-uefi-cd.bin",
+        "kernel/limine/BOOTX64.EFI",
+        "kernel/limine/BOOTIA32.EFI",
+    }) |path| iso.addFileArg(b.path(path));
+
+    const install_iso = b.addInstallFile(iso_path, "rv-os.iso");
+    const iso_step = b.step("iso", "Build a bootable Limine ISO at zig-out/rv-os.iso");
+    iso_step.dependOn(&install_iso.step);
+
+    // Keep the user's raw disk image across every build and normal clean.
+    const disk = b.addSystemCommand(&.{
+        "sh", "-c",
+        "set -eu; mkdir -p .build; if [ ! -f .build/disk.img ]; then qemu-img create -f raw .build/disk.img 16M; fi",
+        "prepare-disk",
+    });
+    disk.stdio = .inherit;
+
+    const qemu = b.option([]const u8, "qemu", "QEMU executable (default: qemu-system-x86_64)") orelse "qemu-system-x86_64";
+    inline for (.{ false, true }) |gui| {
+        const run = b.addSystemCommand(&.{ qemu, "-M", "pc", "-m", "256M", "-smp", "1", "-cdrom" });
+        run.addFileArg(iso_path);
+        run.addArgs(&.{ "-boot", "d" });
+        if (gui) {
+            run.addArgs(&.{ "-vga", "std" });
+        } else {
+            run.addArgs(&.{ "-display", "none" });
+        }
+        run.addArgs(&.{
+            "-serial", "stdio", "-monitor", "none", "-no-reboot",
+            "-drive", "file=.build/disk.img,format=raw,if=ide,index=0",
+        });
+        run.step.dependOn(&disk.step);
+        run.stdio = .inherit;
+
+        const name = if (gui) "run-gui" else "run";
+        const description = if (gui) "Boot Revo OS in QEMU with a window" else "Boot Revo OS in headless QEMU";
+        const run_step = b.step(name, description);
+        run_step.dependOn(&run.step);
+    }
 }
 
 fn kernelize(mod: *std.Build.Module, visited: *std.AutoHashMap(*std.Build.Module, void)) void {
