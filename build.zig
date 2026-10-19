@@ -2,7 +2,7 @@ const std = @import("std");
 const chosen = @import("bridge/kernel.config.zig");
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Kernel optimization mode (default: ReleaseSmall)") orelse .ReleaseSmall;
+    const optimize = b.option(std.lang.Optimize, "optimize", "Kernel optimization mode (default: small)") orelse .small;
     var query: std.Target.Query = .{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
