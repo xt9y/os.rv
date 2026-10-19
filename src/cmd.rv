@@ -1,3 +1,5 @@
+const clear_trm_value = "\x1b[2J\x1b[H"
+
 global process_cmd = fn(cmd) do
 
     match cmd

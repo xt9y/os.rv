@@ -2,7 +2,6 @@
 # OS behavior is entirely in Revo; native hardware access stays in kernel.zig.
 
 # constants
-const clear_trm_value = "\x1b[2J\x1b[H"
 
 global shell = { line = "" }
 global disk_test = { sector = "" }
