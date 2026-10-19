@@ -1,2 +1,69 @@
 # In-memory virtual filesystem
 
+const FS_TYPE = {
+    FILE = :file,
+    FOLDER = :folder,
+    LINK = :link
+}
+
+global fs = {
+    next_inode = 2,
+    last_inode = 3,
+    root_inode = 1,
+
+    nodes = {
+        {   # --> " / "
+            inode = 1,
+            type = FS_TYPE.FOLDER,
+            size = 0,
+            children = {
+                { name = "bin", ionode = 2},
+                { name = "usr", ionode = 3}
+            }
+        },
+
+        {   # --> " / bin/ " 
+            inode = 2,
+            type = FS_TYPE.FOLDER,
+            size = 0,
+            children = {}
+        },
+
+        {   # --> " / usr.txt"
+            inode = 3,
+            type = FS_TYPE.FILE,
+            content = "revo is cool",
+            size = "revo is cool":len(),
+        },
+    }
+}
+
+# TODO: faster
+fn find_inode(id) do
+    for i in 0..fs.nodes:len()
+        if fs.nodes[i].inode == id return fs.nodes[i]
+    return :nil
+end
+
+# TODO: faster
+fn check_parent_for_name(parent, name) do
+    for i in 0..parent.children:len()
+        if parent.children[i].name == name return :true
+    return :false
+end
+
+global create = fn(parent_inode, name, type) do
+    # Validate parent directory
+    const parent = find_inode(parent_inode)
+    if parent == :nil return 0
+    if parent.type != :folder return 0
+    # Validate filename
+    if name == "" or name:contains?("/") return 0
+    # Check for duplicate name
+    if check_parent_for_name(parent, name) return 0
+    # Allocate fs.next_inode
+    # Create the appropriate inode
+    # Add a directory entry: name -> inode
+    # Return the new inode number
+end
+
