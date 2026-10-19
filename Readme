@@ -14,7 +14,7 @@ Initialize both git submodules in an existing checkout:
 
     git submodule update --init --recursive
 
-Then use Zig directly (the top-level Makefile is no longer needed):
+Then use Zig directly:
 
     zig build          # Compile and install kernel ELF to zig-out/bin/rv-os
     zig build kernel   # Same kernel build
@@ -26,28 +26,6 @@ The kernel defaults to ReleaseSmall, matching the former Makefile workflow.
 To override build-time kernel options, for example:
 
     zig build run -Dmax-tasks=16 -Dprocess-code-pages=8 -Dheap-mib=64
-
-The QEMU executable can be changed with -Dqemu=/path/to/qemu-system-x86_64.
-
-The Zig build now automatically concatenates all top-level src/*.rv files in
-alphabetical order, followed by src/main.rv. It embeds the combined program in
-the kernel. The Revo VM still compiles that program when the OS boots; this is
-not native Revo machine-code compilation.
-
-Limine continues to use its own submodule Makefile internally; the OS build
-and boot commands are entirely managed by build.zig.
-
-## Disk and cleanup
-
-A persistent 16 MiB raw disk image is created at .build/disk.img when needed.
-It is reused on subsequent runs, even after deleting Zig's build caches.
-To clean generated Zig artifacts, remove zig-out/ and .zig-cache/.
-To intentionally reset the disk, remove .build/disk.img.
-
-Kernel resources are configured in bridge/kernel.config.zig without modifying
-kernel/. Defaults come from kernel/src/config_defaults.zig.
-Hardware and scheduling remain in the independent kernel/ submodule;
-bridge/app.zig is the Revo integration layer.
 
 ## Revo host functions
 
