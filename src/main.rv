@@ -6,6 +6,10 @@ global shell = { line = "" }
 global disk_test = { sector = "" }
 
 import "./cmd"
+import "./terminal"
+
+terminal.init()
+global terminal_output = fn(text) do terminal.write(text) end
 
 global on_input = fn(ch) do
 
