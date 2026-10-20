@@ -16,11 +16,11 @@ pub fn demo() do
     const w = 400
     const h = 235
 
-    fb_rect(x + 6, y + 8, w, h, 0x07090d)
-    fb_rect(x, y, w, h, 0xc2ceda)
-    fb_rect(x + 2, y + 2, w - 4, h - 4, 0x18283a)
-    fb_rect(x + 2, y + 2, w - 4, 32, 0x3b577a)
-    label(x + 16, y + 10, "REVO WINDOW", 0xffffff, 0x3b577a)
-    label(x + 20, y + 62, "Hello from Revo!", 0xe9f4ff, 0x18283a)
-    label(x + 20, y + 92, "Graphics in src/*.rv", 0xe9f4ff, 0x18283a)
+    fb_rect(x + 6, y + 8, w, h, 461069)
+    fb_rect(x, y, w, h, 12766938)
+    fb_rect(x + 2, y + 2, w - 4, h - 4, 1583162)
+    fb_rect(x + 2, y + 2, w - 4, 32, 3889018)
+    label(x + 16, y + 10, "REVO WINDOW", 16777215, 3889018)
+    label(x + 20, y + 62, "Hello from Revo!", 15332607, 1583162)
+    label(x + 20, y + 92, "Graphics in src/*.rv", 15332607, 1583162)
 end
