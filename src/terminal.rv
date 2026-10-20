@@ -12,8 +12,8 @@ pub const state = {
     lines = {}
 }
 
-const FG = 0xdce7ef
-const BG = 0x0d1520
+const FG = 14477295
+const BG = 857376
 const CELL_W = 12
 const CELL_H = 20
 
