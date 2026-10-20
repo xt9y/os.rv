@@ -1,0 +1,26 @@
+# First floating graphical panel implemented entirely in Revo.
+# Draws on the same framebuffer as the console; a later window manager
+# will own z-order and input focus for individual applications.
+import "./font"
+
+fn label(x, y, text, color, background) do
+    for i in 0..(text:len()) do
+        fb_glyph(x + i * 12, y, font.glyph(text[i..(i + 1)]), color, background)
+    end
+end
+
+pub fn demo() do
+    if fb_width() == 0 return :nil
+    const x = 130
+    const y = 100
+    const w = 400
+    const h = 235
+
+    fb_rect(x + 6, y + 8, w, h, 0x07090d)
+    fb_rect(x, y, w, h, 0xc2ceda)
+    fb_rect(x + 2, y + 2, w - 4, h - 4, 0x18283a)
+    fb_rect(x + 2, y + 2, w - 4, 32, 0x3b577a)
+    label(x + 16, y + 10, "REVO WINDOW", 0xffffff, 0x3b577a)
+    label(x + 20, y + 62, "Hello from Revo!", 0xe9f4ff, 0x18283a)
+    label(x + 20, y + 92, "Graphics in src/*.rv", 0xe9f4ff, 0x18283a)
+end
