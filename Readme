@@ -38,3 +38,37 @@ To override build-time kernel options, for example:
 | fb_pixel(x,y,rgb), fb_clear(rgb) => Pixel/clear operations on 32-bit RGB framebuffer
 | proc_spawn_hex(code) => Spawn raw position-independent x86-64 bytes in ring 3, up to process-code-pages * 4096
 | proc_count(), proc_state(pid) => Process status
+
+
+## GUI console (feature/revo-gui-console)
+
+Run `zig build run-gui` to boot QEMU with a framebuffer text terminal.
+The native kernel only provides PS/2 IRQ1 keyboard input and framebuffer access.
+The Zig bridge buffers Revo's serial_puts/print output and sends it to
+`terminal_output` after each VM call (no interpreter reentrancy).
+
+Everything else is in the Revo program:
+- `src/font.rv`: complete ASCII 5x7 bitmapped font.
+- `src/terminal.rv`: terminal state, ANSI clear/home, wraps and scrolls.
+- `src/window.rv`: a demonstration graphical panel.
+- `src/cmd.rv`: the `window` command opens that panel.
+
+The first PS/2 keymap supports the printable ASCII subset of German QWERTZ.
+It does not yet implement umlauts, AltGr, cursor keys, mouse, or a window manager.
+`zig build run` retains the existing serial terminal. A VGA framebuffer
+must be available for native terminal drawing.
+
+### Writing GUI applications
+
+Call `fb_rect(x, y, width, height, rgb)` and
+`fb_glyph(x, y, seven_row_hex, foreground, background)` from any
+`src/*.rv` module. A GUI application written in Revo can draw a panel
+directly; a later compositor should own the framebuffer for overlapping
+windows and focus.
+
+Zig programs cannot currently compile *inside* this OS. The system does
+not have an on-device Zig compiler, executable loader or graphics IPC for
+ring-3 processes. Zig code can be cross-compiled on a host today, but the
+existing `proc_spawn_hex` API accepts only raw position-independent x86-64
+machine code, not ELF files. A future userspace window API will require
+new syscalls or IPC messages to a Revo compositor.
