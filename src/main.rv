@@ -11,7 +11,7 @@ global on_input = fn(ch) do
 
     if ch == "\n" do
         serial_puts("\n")
-        process_cmd(shell.line)
+        cmd.process(shell.line)
         shell.line = ""
         serial_puts("> ")
         return :nil
@@ -30,7 +30,7 @@ global on_input = fn(ch) do
 
 end
 
-serial_puts(clear_trm_value)
+serial_puts(cmd.clear_trm_value)
 serial_puts("REVO operating system => xt9y/kernel.zig contains the modular language independent kernel.\n") 
 serial_puts("Everything else is done inside xt9y/os.rv\n\n")
 
