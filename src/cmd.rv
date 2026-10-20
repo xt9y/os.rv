@@ -2,9 +2,9 @@
 
 import "./fs"
 
-const clear_trm_value = "\x1b[2J\x1b[H"
+pub const clear_trm_value = "\x1b[2J\x1b[H"
 
-global process = fn(cmd) do
+pub fn process(cmd) do
     match cmd
         | echo when echo:starts_with?("echo") 
             => do match echo 
@@ -46,13 +46,19 @@ global process = fn(cmd) do
 
         | touch when touch:starts_with?("touch")
             => do match touch
-                | text when text:len() >= 5 => fs.create(fs.current_inode, text[6..], fs.TYPE.FILE)
+                | text when text:len() >= 5 => fs.create(fs.fs.current_inode, text[6..], fs.TYPE.FILE)
                 | _ => print("no argument given")
                end
 
-        | ls when ls == "ls"
+        | ls when ls:starts_with?("ls")
             => do match ls
-                | _ => fs.list_children(fs.current_inode)
+                | _ => fs.list_children(fs.fs.current_inode)
+               end
+
+        | rm when rm:starts_with?("rm")
+            => do match rm
+                | text when text:len() >= 3 => fs.remove(fs.fs.current_inode, text[3..])
+                | _ => print("")
                end
 
         | "" => :nil

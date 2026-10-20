@@ -1,12 +1,12 @@
 # In-memory virtual filesystem
 
-const TYPE = {
+pub const TYPE = {
     FILE = :file,
     FOLDER = :folder,
     LINK = :link
 }
 
-global fs = {
+pub const fs = {
     next_inode = 4,
     root_inode = 1,
     current_inode = 1,
@@ -38,22 +38,29 @@ global fs = {
     },
 }
 
-# TODO: faster
-fn check_parent_for_name(parent, name) do
-    for i in 0..parent.children:len()
-        if parent.children[i].name == name return :true
-    return :false
-end
 
-
-# TODO: faster
-global find_inode = fn(id) do
+fn find_inode(id) do
     for i in 0..fs.nodes:len()
         if fs.nodes[i].inode == id return fs.nodes[i]
     return :nil
 end
 
-global list_children = fn(parent_inode) do
+fn find_child(parent, name) do
+    for i in 0..parent.children:len() do
+        const child = parent.children[i]
+        if child.name == name return { index = i, inode = child.inode }
+    end
+    return :nil
+end
+
+fn find_node_index(inode) do
+    for i in 0..fs.nodes:len()
+        if fs.nodes[i].inode == inode return i
+    return :nil
+end
+
+
+pub fn list_children(parent_inode) do
     const parent = find_inode(parent_inode)
 
     if parent == :nil return 0
@@ -65,16 +72,35 @@ global list_children = fn(parent_inode) do
     return :nil
 end
 
+pub fn remove(parent_inode, name) do
+    const parent = find_inode(parent_inode)
+    if parent == :nil return :false
+    if parent.type != :folder return :false
 
-global create = fn(parent_inode, name, kind) do
+    const child = find_child(parent, name)
+    if child == :nil return :nil
+
+    const index = find_node_index(child.inode)
+    if index == :nil return :nil
+
+    const node = fs.nodes[index]
+    if node.type == :folder and node.children:len() > 0
+        return :false
+
+    parent.children:remove(child.index)
+    fs.nodes:remove(index)
+    return :true
+end
+
+pub fn create(parent_inode, name, kind) do
     # Validate parent
     const parent = find_inode(parent_inode)
-    if parent == :nil return 0
-    if parent.type != :folder return 0
+    if parent == :nil return :false
+    if parent.type != :folder return :false
     # Validate filename
-    if name == "" or name:contains?("/") return 0
+    if name == "" or name:contains?("/") return :false
     # Check for duplicate name
-    if check_parent_for_name(parent, name) return 0
+    if find_child(parent, name) != :nil return :false
     # Create inode
     const new_node = {
         inode = fs.next_inode+1,
