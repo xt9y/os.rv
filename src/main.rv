@@ -1,5 +1,3 @@
-import "./cmd"
-
 # The host terminal sends UTF-8 bytes over QEMU COM1.
 # OS behavior is entirely in Revo; native hardware access stays in kernel.zig.
 
@@ -13,7 +11,7 @@ global on_input = fn(ch) do
 
     if ch == "\n" do
         serial_puts("\n")
-        cmd.process_cmd(shell.line)
+        process_cmd(shell.line)
         shell.line = ""
         serial_puts("> ")
         return :nil
@@ -32,7 +30,7 @@ global on_input = fn(ch) do
 
 end
 
-serial_puts(cmd.clear_trm_value)
+serial_puts(clear_trm_value)
 serial_puts("REVO operating system => xt9y/kernel.zig contains the modular language independent kernel.\n") 
 serial_puts("Everything else is done inside xt9y/os.rv\n\n")
 
