@@ -220,7 +220,7 @@ fn hostFbRect(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const h = @min(height, fb.height - y);
     for (0..@intCast(h)) |dy| {
         for (0..@intCast(w)) |dx| {
-            _ = k.framebuffer.pixel(x + dx, y + dy, @intCast(color));
+            _ = k.framebuffer.pixel(x + @as(u64, @intCast(dx)), y + @as(u64, @intCast(dy)), @intCast(color));
         }
     }
     return boolean(true);
@@ -244,7 +244,7 @@ fn hostFbGlyph(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
             const color: u32 = @intCast(if (on) fg else bg);
             for (0..2) |dy| {
                 for (0..2) |dx| {
-                    _ = k.framebuffer.pixel(x + col * 2 + dx, y + row * 2 + dy, color);
+                    _ = k.framebuffer.pixel(x + @as(u64, @intCast(col * 2 + dx)), y + @as(u64, @intCast(row * 2 + dy)), color);
                 }
             }
         }
