@@ -9,6 +9,7 @@ const FS_TYPE = {
 global fs = {
     next_inode = 4,
     root_inode = 1,
+    current_inode = 1,
 
     nodes = {
         {   # --> " / "
@@ -16,8 +17,8 @@ global fs = {
             type = FS_TYPE.FOLDER,
             size = 0,
             children = {
-                { name = "bin", ionode = 2},
-                { name = "usr", ionode = 3}
+                { name = "bin", inode = 2},
+                { name = "usr", inode = 3}
             }
         },
 
@@ -34,15 +35,8 @@ global fs = {
             content = "revo is cool",
             size = "revo is cool":len(),
         },
-    }
+    },
 }
-
-# TODO: faster
-fn find_inode(id) do
-    for i in 0..fs.nodes:len()
-        if fs.nodes[i].inode == id return fs.nodes[i]
-    return :nil
-end
 
 # TODO: faster
 fn check_parent_for_name(parent, name) do
@@ -50,6 +44,27 @@ fn check_parent_for_name(parent, name) do
         if parent.children[i].name == name return :true
     return :false
 end
+
+
+# TODO: faster
+global find_inode = fn(id) do
+    for i in 0..fs.nodes:len()
+        if fs.nodes[i].inode == id return fs.nodes[i]
+    return :nil
+end
+
+global list_children = fn(parent_inode) do
+    const parent = find_inode(parent_inode)
+
+    if parent == :nil return 0
+    if parent.type != :folder return 0
+
+    for i in 0..parent.children:len()
+        print(parent.children[i].name)
+
+    return :nil
+end
+
 
 global create = fn(parent_inode, name, kind) do
     # Validate parent
@@ -62,7 +77,7 @@ global create = fn(parent_inode, name, kind) do
     if check_parent_for_name(parent, name) return 0
     # Create inode
     const new_node = {
-        inode = fs.next_inode,
+        inode = fs.next_inode+1,
         type = kind,
         content = "",
         size = 0,

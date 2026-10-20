@@ -2,9 +2,10 @@
 # OS behavior is entirely in Revo; native hardware access stays in kernel.zig.
 
 # constants
-
 global shell = { line = "" }
 global disk_test = { sector = "" }
+
+import "./cmd"
 
 global on_input = fn(ch) do
 
