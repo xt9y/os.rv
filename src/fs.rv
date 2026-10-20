@@ -1,98 +1,81 @@
-# In-memory virtual filesystem
+# In-memory virtual filesystem (a public Revo module)
 
-const FS_TYPE = {
+pub const FS_TYPE = {
     FILE = :file,
     FOLDER = :folder,
     LINK = :link
 }
 
-global fs = {
+pub const fs = {
     next_inode = 4,
     root_inode = 1,
     current_inode = 1,
-
     nodes = {
-        {   # --> " / "
+        {
             inode = 1,
             type = FS_TYPE.FOLDER,
             size = 0,
             children = {
-                { name = "bin", inode = 2},
-                { name = "usr", inode = 3}
+                { name = "bin", inode = 2 },
+                { name = "usr.txt", inode = 3 }
             }
         },
-
-        {   # --> " / bin/ " 
+        {
             inode = 2,
             type = FS_TYPE.FOLDER,
             size = 0,
             children = {}
         },
-
-        {   # --> " / usr.txt"
+        {
             inode = 3,
             type = FS_TYPE.FILE,
             content = "revo is cool",
-            size = "revo is cool":len(),
-        },
-    },
+            size = "revo is cool":len()
+        }
+    }
 }
 
-# TODO: faster
+fn find_inode(id) do
+    for i in 0..fs.nodes:len()
+        if fs.nodes[i].inode == id return fs.nodes[i]
+    return :nil
+end
+
 fn check_parent_for_name(parent, name) do
     for i in 0..parent.children:len()
         if parent.children[i].name == name return :true
     return :false
 end
 
-
-# TODO: faster
-global find_inode = fn(id) do
-    for i in 0..fs.nodes:len()
-        if fs.nodes[i].inode == id return fs.nodes[i]
-    return :nil
-end
-
-global list_children = fn(parent_inode) do
+pub fn list_children(parent_inode) do
     const parent = find_inode(parent_inode)
-
     if parent == :nil return 0
-    if parent.type != :folder return 0
+    if parent.type != FS_TYPE.FOLDER return 0
 
     for i in 0..parent.children:len()
         print(parent.children[i].name)
-
     return :nil
 end
 
-
-global create = fn(parent_inode, name, kind) do
-    # Validate parent
+pub fn create(parent_inode, name, kind) do
     const parent = find_inode(parent_inode)
     if parent == :nil return 0
-    if parent.type != :folder return 0
-    # Validate filename
-    if name == "" or name:contains?("/") return 0
-    # Check for duplicate name
+    if parent.type != FS_TYPE.FOLDER return 0
+    if name == "" or name:contains?("/") or name == "." or name == ".." return 0
+    if kind != FS_TYPE.FILE and kind != FS_TYPE.FOLDER and kind != FS_TYPE.LINK return 0
     if check_parent_for_name(parent, name) return 0
-    # Create inode
+
+    const id = fs.next_inode
     const new_node = {
-        inode = fs.next_inode+1,
+        inode = id,
         type = kind,
         content = "",
         size = 0,
         children = {},
         target = ""
     }
-    # Register node
-    fs.next_inode = new_node.inode
     fs.nodes:push(new_node)
-    # Add directory entry
-    parent.children:push({
-        name = name,
-        inode = new_node.inode
-    })
-    return new_node.inode
+    parent.children:push({ name = name, inode = id })
+    fs.next_inode = id + 1
+    return id
 end
-
-

@@ -84,28 +84,27 @@ pub fn build(b: *std.Build) void {
     boot.addImport("app", app);
     app.addImport("kernel", kernel);
     app.addImport("revo", revo);
-    // Bundle all top-level Revo sources, with main.rv last as the entry point.
+    // Embed .rv files independently. Revo import statements decide dependencies.
+    // Archive entries: relative filename LF decimal byte count LF raw source.
     const bundle_script =
         \\set -eu
         \\src="$1"
         \\out="$2"
-        \\test -f "$src/main.rv"
-        \\find "$src" -maxdepth 1 -type f -name '*.rv' ! -name 'main.rv' -print | LC_ALL=C sort | while IFS= read -r file; do
-        \\    cat "$file"
-        \\    printf '\n'
-        \\done > "$out"
-        \\cat "$src/main.rv" >> "$out"
-        \\printf '\n' >> "$out"
+        \\: > "$out"
+        \\find "$src" -type f -name '*.rv' ! -path "$src/main.rv" -print | LC_ALL=C sort | while IFS= read -r file; do
+        \\    name="$(printf '%s' "$file" | sed "s|^$src/||")"
+        \\    printf '%s\n' "$name" >> "$out"
+        \\    wc -c < "$file" | tr -d '[:space:]' >> "$out"
+        \\    printf '\n' >> "$out"
+        \\    cat "$file" >> "$out"
+        \\done
     ;
-    const bundle = b.addSystemCommand(&.{ "sh", "-c", bundle_script, "revo-bundle" });
+    const bundle = b.addSystemCommand(&.{ "sh", "-c", bundle_script, "revo-embed" });
     bundle.addDirectoryArg(b.path("src"));
-    const rv_program = bundle.addOutputFileArg("program.rv");
-    // Always rescan src/ so newly added .rv files cannot be missed by caching.
+    const rv_modules = bundle.addOutputFileArg("modules.bin");
     bundle.stdio = .inherit;
-
-    app.addAnonymousImport("rv_program", .{
-        .root_source_file = rv_program,
-    });
+    app.addAnonymousImport("rv_program", .{ .root_source_file = b.path("src/main.rv") });
+    app.addAnonymousImport("rv_modules", .{ .root_source_file = rv_modules });
 
     const exe = b.addExecutable(.{ .name = "rv-os", .root_module = boot });
     exe.entry = .{ .symbol_name = "_start" };

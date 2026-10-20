@@ -1,63 +1,42 @@
-# All shell cmds
-
 import "./fs"
 
-const clear_trm_value = "\x1b[2J\x1b[H"
+pub const clear_trm_value = "\x1b[2J\x1b[H"
 
-global process_cmd = fn(cmd) do
-
+pub fn process_cmd(cmd) do
     match cmd
-        | echo when echo:starts_with?("echo") 
-            => do match echo 
+        | echo when echo:starts_with?("echo")
+            => do match echo
                 | text when text:len() >= 5 => serial_puts(text[5..] ~ "\n")
                 | _ => serial_puts("\n")
             end
 
-        | help when help:starts_with?("help")
-            => do match help
-                | _ => serial_puts("help: echo clear uptime disk fb ps\n")
-               end
-
-        | clear when clear:starts_with?("clear") 
-            => do match clear
-                | _ => serial_puts(clear_trm_value)
-               end
-
-        | uptime when uptime:starts_with?("uptime") 
-            => do match uptime
-                | _ => print("in ms: ", time_ms())
-               end
-
-        | disk when disk:starts_with?("disk") 
-            => do match disk
-                | _ => print("disk_sectors: ", disk_sectors())
-               end
+        | "help" => serial_puts("help: echo clear uptime disk fb ps touch ls\n")
+        | "clear" => serial_puts(clear_trm_value)
+        | "uptime" => print("in ms: ", time_ms())
+        | "disk" => print("disk_sectors: ", disk_sectors())
 
         | fb when fb:starts_with?("fb")
             => do match fb
-                | text when text[3..] == "width" => print("fb_width:", fb_width()) 
+                | text when text[3..] == "width" => print("fb_width:", fb_width())
                 | text when text[3..] == "height" => print("fb_height:", fb_height())
                 | _ => print("fb_width", fb_width(), "fb_height", fb_height())
-               end
+            end
 
-        | ps when ps:starts_with?("ps")
-            => do match ps
-                | _ => print("proc_count: ", proc_count())
-               end
+        | "ps" => print("proc_count: ", proc_count())
+        | "touch" => print("no argument given")
 
-        | touch when touch:starts_with?("touch")
-            => do match touch
-                | text when text:len() >= 5 => create(fs.current_inode, text[6..], FS_TYPE.FILE)
-                | _ => print("no argument given")
-               end
+        | touch when touch:starts_with?("touch ")
+            => do
+                const name = touch[6..]:trim()
+                if name == "" do
+                    print("no argument given")
+                end else do
+                    const id = fs.create(fs.fs.current_inode, name, fs.FS_TYPE.FILE)
+                    if id == 0 print("touch failed")
+                end
+            end
 
-        | ls when ls == "ls"
-            => do match ls
-                | _ => list_children(fs.current_inode)
-               end
-
+        | "ls" => fs.list_children(fs.fs.current_inode)
         | "" => :nil
         | _ => serial_puts("unknown command\n")
-
 end
-

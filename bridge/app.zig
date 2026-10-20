@@ -3,9 +3,94 @@ const revo = @import("revo");
 const k = @import("kernel");
 
 const program = @embedFile("rv_program");
+const module_archive = @embedFile("rv_modules");
 const HostResult = revo.baselib.host.HostResult;
 const HostType = revo.baselib.host.ParamType;
 var vm_ptr: ?*revo.VM = null;
+
+
+const EmbeddedModule = struct {
+    path: []const u8,
+    source: []const u8,
+};
+
+// Read the byte-counted source archive made by build.zig.
+fn lookupModule(requested: []const u8, import_dir: ?[]const u8) ?EmbeddedModule {
+    if (!std.mem.startsWith(u8, requested, "./")) return null;
+    const local = requested[2..];
+    if (local.len == 0 or local[0] == '/' or std.mem.find(u8, local, "..") != null or
+        std.mem.findScalar(u8, local, '\\') != null) return null;
+
+    const dir = import_dir orelse ".";
+    if (std.mem.find(u8, dir, "..") != null or std.mem.startsWith(u8, dir, "/")) return null;
+
+    var name_buf: [512]u8 = undefined;
+    const wanted = if (std.mem.eql(u8, dir, "."))
+        local
+    else
+        std.fmt.bufPrint(&name_buf, "{s}/{s}", .{ dir, local }) catch return null;
+
+    var cursor: usize = 0;
+    while (cursor < module_archive.len) {
+        const path_end = cursor + (std.mem.findScalar(u8, module_archive[cursor..], '\n') orelse return null);
+        const path = module_archive[cursor..path_end];
+        cursor = path_end + 1;
+        const size_end = cursor + (std.mem.findScalar(u8, module_archive[cursor..], '\n') orelse return null);
+        const size = std.fmt.parseInt(usize, module_archive[cursor..size_end], 10) catch return null;
+        cursor = size_end + 1;
+        if (size > module_archive.len - cursor) return null;
+        const source = module_archive[cursor .. cursor + size];
+        cursor += size;
+
+        const matched = std.mem.eql(u8, path, wanted) or
+            (path.len == wanted.len + 3 and std.mem.eql(u8, path[0..wanted.len], wanted) and
+                std.mem.eql(u8, path[wanted.len..], ".rv"));
+        if (matched) return .{ .path = path, .source = source };
+    }
+    return null;
+}
+
+// Override the host-filesystem import function for the freestanding VM.
+// Imported module export tables are rooted through Revo's import cache.
+fn hostImport(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const sid = args[0].asString() orelse return HostResult.other("import expects a string");
+    const module = lookupModule(vm.stringValue(sid), vm.import_dir) orelse
+        return HostResult.other("embedded Revo module not found");
+    if (vm.import_cache.get(module.path)) |cached| return HostResult.data(cached.result);
+    for (vm.loading_stack.items) |loading| {
+        if (std.mem.eql(u8, loading, module.path)) return HostResult.other("cyclic module import");
+    }
+
+    const loading_key = try vm.runtime.alloc.dupe(u8, module.path);
+    try vm.loading_stack.append(vm.runtime.alloc, loading_key);
+    defer {
+        _ = vm.loading_stack.pop();
+        vm.runtime.alloc.free(loading_key);
+    }
+
+    const source: revo.lang.Source = .{ .name = module.path, .text = module.source };
+    const built = try revo.lang.build(vm, source, .{ .module_scope = true });
+    const artifact = switch (built) {
+        .ok => |compiled| compiled,
+        .err => |failure| {
+            var writer = k.io.SinkWriter.init();
+            revo.lang.renderError(vm.runtime.alloc, &writer.interface, source, failure, .{}) catch {};
+            puts("\n");
+            return HostResult.other("module compilation failed");
+        },
+    };
+    defer vm.runtime.alloc.free(artifact.instructions);
+    defer vm.runtime.alloc.free(artifact.spans);
+
+    const outcome = try revo.run.runBytecodeReport(vm, module.path, artifact.instructions);
+    if (outcome == .err) return HostResult.other("module execution failed");
+    const value = vm.currentFiber().result;
+
+    const key = try vm.runtime.alloc.dupe(u8, module.path);
+    errdefer vm.runtime.alloc.free(key);
+    try vm.import_cache.put(key, .{ .result = value, .stamp = .{ .mtime = 0, .size = module.source.len } });
+    return HostResult.data(value);
+}
 
 fn puts(bytes: []const u8) void {
     k.write(bytes);
@@ -140,6 +225,7 @@ pub fn boot(alloc: std.mem.Allocator) void {
         return;
     };
 
+    register(vm, "import", &.{.string}, hostImport) catch return puts("Revo: module registration failed\n");
     register(vm, "serial_puts", &.{.string}, hostPuts) catch return puts("Revo: host registration failed\n");
     register(vm, "time_ms", &.{}, hostTime) catch return puts("Revo: time registration failed\n");
     register(vm, "disk_sectors", &.{}, hostDiskSectors) catch return puts("Revo: disk registration failed\n");
@@ -153,7 +239,7 @@ pub fn boot(alloc: std.mem.Allocator) void {
     register(vm, "proc_state", &.{.number}, hostProcState) catch return puts("Revo: process registration failed\n");
     register(vm, "proc_spawn_hex", &.{.string}, hostProcSpawn) catch return puts("Revo: process registration failed\n");
 
-    const build_result = revo.lang.build(vm, .{ .name = "os.rv", .text = program }, .{}) catch {
+    const build_result = revo.lang.build(vm, .{ .name = "main.rv", .text = program }, .{}) catch {
         puts("Revo: compilation threw\n");
         return;
     };
@@ -162,16 +248,16 @@ pub fn boot(alloc: std.mem.Allocator) void {
         .err => |failure| {
             puts("Revo: compilation failed\n");
             var writer = k.io.SinkWriter.init();
-            revo.lang.renderError(alloc, &writer.interface, .{ .name = "os.rv", .text = program }, failure, .{}) catch {};
+            revo.lang.renderError(alloc, &writer.interface, .{ .name = "main.rv", .text = program }, failure, .{}) catch {};
             puts("\n");
             return;
         },
     };
-    vm.setProgramDebugInfo(artifact.spans, "", "os.rv") catch {
+    vm.setProgramDebugInfo(artifact.spans, "", "main.rv") catch {
         puts("Revo: debug symbols failed\n");
         return;
     };
-    const result = revo.run.runBytecodeReport(vm, "os.rv", artifact.instructions) catch {
+    const result = revo.run.runBytecodeReport(vm, "main.rv", artifact.instructions) catch {
         puts("Revo: execution threw\n");
         return;
     };
