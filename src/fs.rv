@@ -93,15 +93,12 @@ pub fn remove(parent_inode, name) do
 end
 
 pub fn create(parent_inode, name, kind) do
-    # Validate parent
     const parent = find_inode(parent_inode)
     if parent == :nil return :false
     if parent.type != :folder return :false
-    # Validate filename
     if name == "" or name:contains?("/") return :false
-    # Check for duplicate name
     if find_child(parent, name) != :nil return :false
-    # Create inode
+
     const new_node = {
         inode = fs.next_inode+1,
         type = kind,
@@ -110,14 +107,15 @@ pub fn create(parent_inode, name, kind) do
         children = {},
         target = ""
     }
-    # Register node
+   
     fs.next_inode = new_node.inode
     fs.nodes:push(new_node)
-    # Add directory entry
+    
     parent.children:push({
         name = name,
         inode = new_node.inode
     })
+    
     return new_node.inode
 end
 
