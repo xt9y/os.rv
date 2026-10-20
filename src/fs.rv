@@ -7,8 +7,7 @@ const FS_TYPE = {
 }
 
 global fs = {
-    next_inode = 2,
-    last_inode = 3,
+    next_inode = 4,
     root_inode = 1,
 
     nodes = {
@@ -52,8 +51,8 @@ fn check_parent_for_name(parent, name) do
     return :false
 end
 
-global create = fn(parent_inode, name, type) do
-    # Validate parent directory
+global create = fn(parent_inode, name, kind) do
+    # Validate parent
     const parent = find_inode(parent_inode)
     if parent == :nil return 0
     if parent.type != :folder return 0
@@ -61,9 +60,24 @@ global create = fn(parent_inode, name, type) do
     if name == "" or name:contains?("/") return 0
     # Check for duplicate name
     if check_parent_for_name(parent, name) return 0
-    # Allocate fs.next_inode
-    # Create the appropriate inode
-    # Add a directory entry: name -> inode
-    # Return the new inode number
+    # Create inode
+    const new_node = {
+        inode = fs.next_inode,
+        type = kind,
+        content = "",
+        size = 0,
+        children = {},
+        target = ""
+    }
+    # Register node
+    fs.next_inode = new_node.inode
+    fs.nodes:push(new_node)
+    # Add directory entry
+    parent.children:push({
+        name = name,
+        inode = new_node.inode
+    })
+    return new_node.inode
 end
+
 
