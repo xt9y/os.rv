@@ -7,8 +7,8 @@ const module_archive = @embedFile("rv_modules");
 const HostResult = revo.baselib.host.HostResult;
 const HostType = revo.baselib.host.ParamType;
 var vm_ptr: ?*revo.VM = null;
-// Buffer output until Revo returns from its VM callback. This avoids
-// recursively entering the interpreter from serial_puts() or print().
+// Optional Revo output callback. Buffer while the VM executes; never
+// re-enter the interpreter from native serial_puts() / print() host functions.
 var pending: [65536]u8 = undefined;
 var pending_len: usize = 0;
 
@@ -103,15 +103,21 @@ fn puts(bytes: []const u8) void {
     pending_len += count;
 }
 
-fn flushTerminal() void {
+fn flushOutput() void {
     const vm = vm_ptr orelse return;
     if (pending_len == 0) return;
-    const callback = vm.getGlobal("terminal_output") orelse return;
-    if (callback.asFunction() == null) return;
+    const callback = vm.getGlobal("on_output") orelse {
+        pending_len = 0;
+        return;
+    };
+    if (callback.asFunction() == null) {
+        pending_len = 0;
+        return;
+    }
     const data = vm.ownValueString(pending[0..pending_len]) catch return;
     pending_len = 0;
     _ = vm.callFunctionParts(callback, null, &[_]revo.Value{data}, null) catch {
-        k.serial.write("Revo: terminal_output failed\n");
+        k.serial.write("Revo: on_output callback failed\n");
     };
 }
 
@@ -208,45 +214,46 @@ fn hostFbClear(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     if (color > 0xffffff) return boolean(false);
     return boolean(k.framebuffer.clear(@intCast(color)));
 }
+// Hardware primitives only. Revo controls glyphs, compositing and UI.
 fn hostFbRect(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     const x = uintArg(args, 0) orelse return boolean(false);
     const y = uintArg(args, 1) orelse return boolean(false);
     const width = uintArg(args, 2) orelse return boolean(false);
     const height = uintArg(args, 3) orelse return boolean(false);
     const color = uintArg(args, 4) orelse return boolean(false);
-    const fb = k.framebuffer.info() orelse return boolean(false);
-    if (color > 0xffffff or x >= fb.width or y >= fb.height) return boolean(false);
-    const w = @min(width, fb.width - x);
-    const h = @min(height, fb.height - y);
-    for (0..@intCast(h)) |dy| {
-        for (0..@intCast(w)) |dx| {
-            _ = k.framebuffer.pixel(x + @as(u64, @intCast(dx)), y + @as(u64, @intCast(dy)), @intCast(color));
-        }
-    }
-    return boolean(true);
+    if (color > 0xffffff) return boolean(false);
+    return boolean(k.framebuffer.rect(x, y, width, height, @intCast(color)));
 }
 
-// Revo owns the font data; Zig only copies the supplied 5x7 bitmap.
-fn hostFbGlyph(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+// Copies a validated RGB888 hex tile to the framebuffer. The application
+// generates and owns the pixel contents; this function only transfers them.
+// Input: "RRGGBB" repeated width*height times, in row-major order.
+fn hostFbBlitRgb(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
     const x = uintArg(args, 0) orelse return boolean(false);
     const y = uintArg(args, 1) orelse return boolean(false);
-    const sid = args[2].asString() orelse return boolean(false);
-    const glyph = vm.stringValue(sid);
-    const fg = uintArg(args, 3) orelse return boolean(false);
-    const bg = uintArg(args, 4) orelse return boolean(false);
-    if (glyph.len != 14 or fg > 0xffffff or bg > 0xffffff) return boolean(false);
-    for (0..7) |row| {
-        const hi = hexNibble(glyph[row * 2]) orelse return boolean(false);
-        const lo = hexNibble(glyph[row * 2 + 1]) orelse return boolean(false);
-        const bits = (hi << 4) | lo;
-        for (0..5) |col| {
-            const on = (bits & (@as(u8, 1) << @as(u3, @intCast(4 - col)))) != 0;
-            const color: u32 = @intCast(if (on) fg else bg);
-            for (0..2) |dy| {
-                for (0..2) |dx| {
-                    _ = k.framebuffer.pixel(x + @as(u64, @intCast(col * 2 + dx)), y + @as(u64, @intCast(row * 2 + dy)), color);
-                }
+    const width = uintArg(args, 2) orelse return boolean(false);
+    const height = uintArg(args, 3) orelse return boolean(false);
+    const sid = args[4].asString() orelse return boolean(false);
+    const fb = k.framebuffer.info() orelse return boolean(false);
+    if (width == 0 or height == 0 or x >= fb.width or y >= fb.height) return boolean(false);
+    if (width > fb.width - x or height > fb.height - y) return boolean(false);
+    if (width > 65536 or height > 65536 or width * height > 65536) return boolean(false);
+
+    const hex = vm.stringValue(sid);
+    const pixel_count: usize = @intCast(width * height);
+    if (hex.len != pixel_count * 6) return boolean(false);
+    for (hex) |digit| {
+        if (hexNibble(digit) == null) return boolean(false);
+    }
+
+    for (0..@intCast(height)) |row| {
+        for (0..@intCast(width)) |col| {
+            const offset: usize = (row * @as(usize, @intCast(width)) + col) * 6;
+            var rgb: u32 = 0;
+            for (hex[offset .. offset + 6]) |digit| {
+                rgb = (rgb << 4) | hexNibble(digit).?;
             }
+            _ = k.framebuffer.pixel(x + @as(u64, @intCast(col)), y + @as(u64, @intCast(row)), rgb);
         }
     }
     return boolean(true);
@@ -300,7 +307,7 @@ pub fn boot(alloc: std.mem.Allocator) void {
     register(vm, "fb_pixel", &.{.number, .number, .number}, hostFbPixel) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "fb_clear", &.{.number}, hostFbClear) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "fb_rect", &.{.number, .number, .number, .number, .number}, hostFbRect) catch return puts("Revo: framebuffer registration failed\n");
-    register(vm, "fb_glyph", &.{.number, .number, .string, .number, .number}, hostFbGlyph) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_blit_rgb", &.{.number, .number, .number, .number, .string}, hostFbBlitRgb) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "proc_count", &.{}, hostProcCount) catch return puts("Revo: process registration failed\n");
     register(vm, "proc_state", &.{.number}, hostProcState) catch return puts("Revo: process registration failed\n");
     register(vm, "proc_spawn_hex", &.{.string}, hostProcSpawn) catch return puts("Revo: process registration failed\n");
@@ -330,7 +337,7 @@ pub fn boot(alloc: std.mem.Allocator) void {
     switch (result) {
         .ok => {
             vm_ptr = vm;
-            flushTerminal();
+            flushOutput();
         },
         .err => |failure| {
             puts("Revo: runtime error\n");
@@ -357,5 +364,20 @@ pub fn onInput(byte: u8) void {
         puts(@errorName(err));
         puts("\n");
     };
-    flushTerminal();
+    flushOutput();
+}
+
+// Receives unmodified PS/2 scan-code bytes, including E0/E1 prefixes and
+// key-release bytes. Keyboard maps and event state live in Revo.
+pub fn onScancode(raw: u8) void {
+    const vm = vm_ptr orelse return;
+    const callback = vm.getGlobal("on_scancode") orelse return;
+    if (callback.asFunction() == null) return;
+    const value = revo.Value.new.num(@as(f64, @floatFromInt(raw)));
+    _ = vm.callFunctionParts(callback, null, &[_]revo.Value{value}, null) catch |err| {
+        puts("Revo: on_scancode error: ");
+        puts(@errorName(err));
+        puts("\n");
+    };
+    flushOutput();
 }
