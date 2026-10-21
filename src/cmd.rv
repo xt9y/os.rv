@@ -1,7 +1,6 @@
 # All shell cmds
 
 import "./fs"
-import "./window"
 
 pub const clear_trm_value = "\x1b[2J\x1b[H"
 
@@ -15,7 +14,7 @@ pub fn process(cmd) do
 
         | help when help:starts_with?("help")
             => do match help
-                | _ => serial_puts("help: echo clear uptime disk fb ps touch ls rm window\n")
+                | _ => serial_puts("help: echo clear uptime disk fb ps\n")
                end
 
         | clear when clear:starts_with?("clear") 
@@ -60,10 +59,6 @@ pub fn process(cmd) do
             => do match rm
                 | text when text:len() >= 3 => fs.remove(fs.fs.current_inode, text[3..])
                 | _ => print("")
-               end
-
-        | gui when gui:starts_with?("window")
-            => do window.demo()
                end
 
         | "" => :nil
