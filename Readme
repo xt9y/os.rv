@@ -1,8 +1,8 @@
 Revo OS
 =======
 
-Runs on [kernel.zig](https://github.com/xt9y/kernel.zig), a standalone MIT-derived x86-64 Zig kernel.
-Uses Zig 0.17.0, Revo, Limine and QEMU.
+Runs on [kernel.zig](https://github.com/xt9y/kernel.zig), a standalone x86-64
+Zig kernel. Uses Zig 0.17.0, Revo, Limine and QEMU.
 
 ## Build and run
 
@@ -10,31 +10,89 @@ On macOS, install Zig, QEMU and xorriso:
 
     brew install zig qemu xorriso
 
-Initialize both git submodules in an existing checkout:
+Initialize git submodules:
 
     git submodule update --init --recursive
 
-Then use Zig directly:
+Then:
 
-    zig build          # Compile and install kernel ELF to zig-out/bin/rv-os
-    zig build kernel   # Same kernel build
-    zig build iso      # Create bootable ISO at zig-out/rv-os.iso
-    zig build run      # Boot in QEMU using a serial terminal
-    zig build run-gui  # Boot in QEMU with a window
+    zig build          # Compile kernel ELF
+    zig build iso      # Bootable ISO
+    zig build run      # Serial-only terminal
+    zig build run-gui  # QEMU VGA window; Revo can draw into its framebuffer
 
-The kernel defaults to ReleaseSmall, matching the former Makefile workflow.
-To override build-time kernel options, for example:
+The kernel defaults to ReleaseSmall. Zig build options are available:
 
-    zig build run -Dmax-tasks=16 -Dprocess-code-pages=8 -Dheap-mib=64
+    zig build run-gui -Dmax-tasks=16 -Dprocess-code-pages=8 -Dheap-mib=64
 
-## Revo host functions
+## Design boundary
 
-| serial_puts(text) => Write to COM1
-| time_ms() => Milliseconds since PIT timer started (configured pit-hz resolution)
-| disk_sectors() => Detected IDE sector count, zero if absent
-| disk_read_hex(lba) => Read 512 bytes as 1024 ASCII hex characters
-| disk_write_hex(lba, hex) => Write one 512-byte sector from exactly 1024 hex digits
-| fb_width(), fb_height() => Framebuffer size, zero when unavailable
-| fb_pixel(x,y,rgb), fb_clear(rgb) => Pixel/clear operations on 32-bit RGB framebuffer
-| proc_spawn_hex(code) => Spawn raw position-independent x86-64 bytes in ring 3, up to process-code-pages * 4096
-| proc_count(), proc_state(pid) => Process status
+The kernel and Zig bridge provide hardware access ONLY.
+
+Graphics, text rendering, glyphs, layout, compositor, GUI shell, input handling,
+window management and applications are intentionally NOT implemented by Zig.
+Implement all those behaviors in your own src/*.rv files.
+
+The original src/main.rv, src/cmd.rv and src/fs.rv are unchanged by this branch.
+Thus run-gui initially opens a framebuffer without drawing a Revo GUI.
+The serial shell still works. The Revo application must opt into the
+callbacks documented below to display its text and process its keyboard.
+
+## Framebuffer host API (Revo)
+
+    fb_width() -> number             # 0 if unavailable
+    fb_height() -> number            # 0 if unavailable
+    fb_clear(rgb) -> bool            # 0xRRGGBB, passed as a numeric value
+    fb_pixel(x, y, rgb) -> bool
+    fb_rect(x, y, width, height, rgb) -> bool
+
+    fb_blit_rgb(x, y, w, h, hex) -> bool
+
+All coordinates and dimensions must be non-negative integral numbers.
+RGB is a numeric value 0 through 16777215 (0xFFFFFF). Rectangle drawing
+clips at framebuffer boundaries. Invalid framebuffer / color returns false.
+
+fb_blit_rgb takes a Revo string of 6 hexadecimal characters per RGB888
+pixel, row-major top-to-bottom and left-to-right, e.g. "ff000000ff00"
+for red then green. The entire tile must fit in the framebuffer. Up to
+65536 pixels may be sent in one call; use multiple tiles for larger images.
+This is a byte transfer primitive, not a glyph, font, image loader or UI API.
+
+## Input/output hooks (optional Revo globals)
+
+    global on_scancode = fn(byte) do
+        # byte: 0..255 raw PS/2 keyboard scan-code stream.
+        # Includes make/break bytes and E0/E1 prefixes.
+        # Implement keyboard layout, modifiers and text dispatch in Revo.
+    end
+
+    global on_output = fn(text) do
+        # A batch of output bytes from serial_puts() or print().
+        # You choose whether/how to draw them in your own terminal.
+    end
+
+The bridge invokes the hooks only when present. Existing serial shell input
+continues to use global on_input(ch) and is not automatically reinterpreted
+as a PS/2 key. on_output is called after interpreter callbacks to avoid
+re-entering the VM from a native host function. It also receives output
+produced during Revo startup, when the callback is defined before boot ends.
+
+The QEMU PC PS/2 controller is expected to produce scan-code set 1 as
+delivered by the BIOS controller translation. Mapping keys to characters,
+Shift, AltGr, Caps Lock and international layouts is completely your job
+in Revo. Mouse events are not part of this patch.
+
+## Existing host functions
+
+    serial_puts(text)       # COM1, plus optional on_output mirroring
+    time_ms()
+    disk_sectors()
+    disk_read_hex(lba)
+    disk_write_hex(lba, hex)
+    proc_count()
+    proc_state(pid)
+    proc_spawn_hex(code)
+
+This is not an ELF loader: ring-3 processes currently accept raw
+position-independent x86-64 machine code. An on-device Zig compiler and
+separate GUI application IPC are not yet implemented.

@@ -7,6 +7,10 @@ const module_archive = @embedFile("rv_modules");
 const HostResult = revo.baselib.host.HostResult;
 const HostType = revo.baselib.host.ParamType;
 var vm_ptr: ?*revo.VM = null;
+// Optional Revo output callback. Buffer while the VM executes; never
+// re-enter the interpreter from native serial_puts() / print() host functions.
+var pending: [65536]u8 = undefined;
+var pending_len: usize = 0;
 
 
 const EmbeddedModule = struct {
@@ -93,7 +97,28 @@ fn hostImport(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
 }
 
 fn puts(bytes: []const u8) void {
-    k.write(bytes);
+    k.serial.write(bytes);
+    const count = @min(bytes.len, pending.len - pending_len);
+    @memcpy(pending[pending_len .. pending_len + count], bytes[0..count]);
+    pending_len += count;
+}
+
+fn flushOutput() void {
+    const vm = vm_ptr orelse return;
+    if (pending_len == 0) return;
+    const callback = vm.getGlobal("on_output") orelse {
+        pending_len = 0;
+        return;
+    };
+    if (callback.asFunction() == null) {
+        pending_len = 0;
+        return;
+    }
+    const data = vm.ownValueString(pending[0..pending_len]) catch return;
+    pending_len = 0;
+    _ = vm.callFunctionParts(callback, null, &[_]revo.Value{data}, null) catch {
+        k.serial.write("Revo: on_output callback failed\n");
+    };
 }
 
 fn hostPuts(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
@@ -189,6 +214,51 @@ fn hostFbClear(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     if (color > 0xffffff) return boolean(false);
     return boolean(k.framebuffer.clear(@intCast(color)));
 }
+// Hardware primitives only. Revo controls glyphs, compositing and UI.
+fn hostFbRect(args: []const revo.Value, _: *revo.VM) anyerror!HostResult {
+    const x = uintArg(args, 0) orelse return boolean(false);
+    const y = uintArg(args, 1) orelse return boolean(false);
+    const width = uintArg(args, 2) orelse return boolean(false);
+    const height = uintArg(args, 3) orelse return boolean(false);
+    const color = uintArg(args, 4) orelse return boolean(false);
+    if (color > 0xffffff) return boolean(false);
+    return boolean(k.framebuffer.rect(x, y, width, height, @intCast(color)));
+}
+
+// Copies a validated RGB888 hex tile to the framebuffer. The application
+// generates and owns the pixel contents; this function only transfers them.
+// Input: "RRGGBB" repeated width*height times, in row-major order.
+fn hostFbBlitRgb(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
+    const x = uintArg(args, 0) orelse return boolean(false);
+    const y = uintArg(args, 1) orelse return boolean(false);
+    const width = uintArg(args, 2) orelse return boolean(false);
+    const height = uintArg(args, 3) orelse return boolean(false);
+    const sid = args[4].asString() orelse return boolean(false);
+    const fb = k.framebuffer.info() orelse return boolean(false);
+    if (width == 0 or height == 0 or x >= fb.width or y >= fb.height) return boolean(false);
+    if (width > fb.width - x or height > fb.height - y) return boolean(false);
+    if (width > 65536 or height > 65536 or width * height > 65536) return boolean(false);
+
+    const hex = vm.stringValue(sid);
+    const pixel_count: usize = @intCast(width * height);
+    if (hex.len != pixel_count * 6) return boolean(false);
+    for (hex) |digit| {
+        if (hexNibble(digit) == null) return boolean(false);
+    }
+
+    for (0..@intCast(height)) |row| {
+        for (0..@intCast(width)) |col| {
+            const offset: usize = (row * @as(usize, @intCast(width)) + col) * 6;
+            var rgb: u32 = 0;
+            for (hex[offset .. offset + 6]) |digit| {
+                rgb = (rgb << 4) | hexNibble(digit).?;
+            }
+            _ = k.framebuffer.pixel(x + @as(u64, @intCast(col)), y + @as(u64, @intCast(row)), rgb);
+        }
+    }
+    return boolean(true);
+}
+
 fn hostProcCount(_: []const revo.Value, _: *revo.VM) anyerror!HostResult {
     return number(k.tasks.count());
 }
@@ -211,6 +281,7 @@ fn hostProcSpawn(args: []const revo.Value, vm: *revo.VM) anyerror!HostResult {
 }
 
 pub fn boot(alloc: std.mem.Allocator) void {
+    k.io.setSink(puts);
     const vm = alloc.create(revo.VM) catch {
         puts("Revo: VM allocation failed\n");
         return;
@@ -235,6 +306,8 @@ pub fn boot(alloc: std.mem.Allocator) void {
     register(vm, "fb_height", &.{}, hostFbHeight) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "fb_pixel", &.{.number, .number, .number}, hostFbPixel) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "fb_clear", &.{.number}, hostFbClear) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_rect", &.{.number, .number, .number, .number, .number}, hostFbRect) catch return puts("Revo: framebuffer registration failed\n");
+    register(vm, "fb_blit_rgb", &.{.number, .number, .number, .number, .string}, hostFbBlitRgb) catch return puts("Revo: framebuffer registration failed\n");
     register(vm, "proc_count", &.{}, hostProcCount) catch return puts("Revo: process registration failed\n");
     register(vm, "proc_state", &.{.number}, hostProcState) catch return puts("Revo: process registration failed\n");
     register(vm, "proc_spawn_hex", &.{.string}, hostProcSpawn) catch return puts("Revo: process registration failed\n");
@@ -262,7 +335,10 @@ pub fn boot(alloc: std.mem.Allocator) void {
         return;
     };
     switch (result) {
-        .ok => vm_ptr = vm,
+        .ok => {
+            vm_ptr = vm;
+            flushOutput();
+        },
         .err => |failure| {
             puts("Revo: runtime error\n");
             renderFailure(vm, failure);
@@ -288,4 +364,20 @@ pub fn onInput(byte: u8) void {
         puts(@errorName(err));
         puts("\n");
     };
+    flushOutput();
+}
+
+// Receives unmodified PS/2 scan-code bytes, including E0/E1 prefixes and
+// key-release bytes. Keyboard maps and event state live in Revo.
+pub fn onScancode(raw: u8) void {
+    const vm = vm_ptr orelse return;
+    const callback = vm.getGlobal("on_scancode") orelse return;
+    if (callback.asFunction() == null) return;
+    const value = revo.Value.new.num(@as(f64, @floatFromInt(raw)));
+    _ = vm.callFunctionParts(callback, null, &[_]revo.Value{value}, null) catch |err| {
+        puts("Revo: on_scancode error: ");
+        puts(@errorName(err));
+        puts("\n");
+    };
+    flushOutput();
 }
